@@ -1,193 +1,53 @@
-/*
- Licensed to the Apache Software Foundation (ASF) under one
- or more contributor license agreements.  See the NOTICE file
- distributed with this work for additional information
- regarding copyright ownership.  The ASF licenses this file
- to you under the Apache License, Version 2.0 (the
- "License"); you may not use this file except in compliance
- with the License.  You may obtain a copy of the License at
-
- http://www.apache.org/licenses/LICENSE-2.0
-
- Unless required by applicable law or agreed to in writing,
- software distributed under the License is distributed on an
- "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- KIND, either express or implied.  See the License for the
- specific language governing permissions and limitations
- under the License.
- */
-
 #import "APPEmailComposer.h"
-#import "APPEmailComposerImpl.h"
+#import <MessageUI/MFMailComposeViewController.h>
 
-@interface APPEmailComposer ()
-
-// Reference is needed because of the async delegate
-@property (nonatomic, strong) CDVInvokedUrlCommand* command;
-// Implements the core functionality
-@property (nonatomic, strong) APPEmailComposerImpl* impl;
-
+@interface APPEmailComposer () <MFMailComposeViewControllerDelegate>
 @end
 
 @implementation APPEmailComposer
 
-@synthesize command, impl;
+- (void)open:(CDVInvokedUrlCommand*)command {
+    self.callbackId = command.callbackId;
 
-#pragma mark -
-#pragma mark Lifecycle
+    NSDictionary* props = command.arguments[0];
 
-/**
- * Initialize the core impl object which does the main stuff.
- */
-- (void) pluginInitialize
-{
-    self.impl = [[APPEmailComposerImpl alloc] init];
-}
+    NSString* subject = props[@"subject"] ?: @"Hi";
+    NSString* body = props[@"body"] ?: @"Hi from MFMailComposeViewController";
+    NSString* base64Attachment = props[@"base64Attachment"];
+    NSString* attachmentFilename = props[@"attachmentFilename"] ?: @"attachment.pdf";
 
-#pragma mark -
-#pragma mark Public
-
-/**
- * Checks if an email account is configured.
- */
-- (void) account:(CDVInvokedUrlCommand*)cmd
-{
-    [self.commandDelegate runInBackground:^{
-        bool res = [self.impl canSendMail];
-        CDVPluginResult* result;
-
-        result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK
-                                     messageAsBool:res];
-
-        [self.commandDelegate sendPluginResult:result
-                                    callbackId:cmd.callbackId];
-    }];
-}
-
-/**
- * Checks if an email client is available which responds to the scheme.
- */
-- (void) client:(CDVInvokedUrlCommand*)cmd
-{
-    [self.commandDelegate runInBackground:^{
-        NSString* scheme = [cmd argumentAtIndex:0];
-        bool res         = [self.impl canOpenScheme:scheme];
-        CDVPluginResult* result;
-
-        result = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK
-                                     messageAsBool:res];
-
-        [self.commandDelegate sendPluginResult:result
-                                    callbackId:cmd.callbackId];
-    }];
-}
-
-/**
- * Show the email composer view with pre-filled data.
- */
-- (void) open:(CDVInvokedUrlCommand*)cmd
-{
-    NSDictionary* props = cmd.arguments[0];
-
-    self.command = cmd;
-
-    [self.commandDelegate runInBackground:^{
-        NSString* scheme = [props objectForKey:@"app"];
-
-        if ([self canUseAppleMail:scheme]) {
-            [self presentMailComposerFromProperties:props];
-        } else {
-            [self openURLFromProperties:props];
-        }
-    }];
-}
-
-#pragma mark -
-#pragma mark MFMailComposeViewControllerDelegate
-
-/**
- * Delegate will be called after the mail composer did finish an action
- * to dismiss the view.
- */
-- (void) mailComposeController:(MFMailComposeViewController*)controller
-           didFinishWithResult:(MFMailComposeResult)result
-                         error:(NSError*)error
-{
-    [controller dismissViewControllerAnimated:YES completion:NULL];
-
-    switch(result) {
-        case MFMailComposeResultSent:
-            [self execCallback:YES];
-        case MFMailComposeResultSaved:
-            [self execCallback:YES];
-        default:
-            [self execCallback:NO];
+    if (![MFMailComposeViewController canSendMail]) {
+        CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"Cannot send mail"];
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+        return;
     }
-}
 
-#pragma mark -
-#pragma mark Private
+    MFMailComposeViewController *mailVC = [[MFMailComposeViewController alloc] init];
+    mailVC.mailComposeDelegate = self;
 
-/**
- * Displays the email draft.
- */
-- (void) presentMailComposerFromProperties:(NSDictionary*)props
-{
-    dispatch_async(dispatch_get_main_queue(), ^{
-        MFMailComposeViewController* draft =
-        [self.impl mailComposerFromProperties:props delegateTo:self];
+    [mailVC setSubject:subject];
+    [mailVC setMessageBody:body isHTML:YES];
 
-        if (!draft) {
-            [self execCallback];
-            return;
+    if (base64Attachment) {
+        NSData *data = [[NSData alloc] initWithBase64EncodedString:base64Attachment options:NSDataBase64DecodingIgnoreUnknownCharacters];
+        if (data) {
+            [mailVC addAttachmentData:data mimeType:@"application/pdf" fileName:attachmentFilename];
         }
+    }
 
-        [self.viewController presentViewController:draft
-                                          animated:YES
-                                        completion:NULL];
-    });
-
+    [self.viewController presentViewController:mailVC animated:YES completion:nil];
 }
 
-/**
- * Instructs the application to open the specified URL.
- */
-- (void) openURLFromProperties:(NSDictionary*)props
-{
-    NSURL* url = [self.impl urlFromProperties:props];
+- (void)mailComposeController:(MFMailComposeViewController*)controller
+          didFinishWithResult:(MFMailComposeResult)result
+                        error:(NSError*)error {
 
-    dispatch_async(dispatch_get_main_queue(), ^{
-        [[UIApplication sharedApplication] openURL:url
-                                           options:@{}
-                                 completionHandler:^(BOOL success) {
-            [self execCallback: success];
-        }];
-    });
+    [controller dismissViewControllerAnimated:YES completion:nil];
+
+    BOOL success = result == MFMailComposeResultSent;
+
+    CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsBool:success];
+
+    [self.commandDelegate sendPluginResult:pluginResult callbackId:self.callbackId];
 }
-
-/**
- * If the specified app if the buil-in iMail framework can be used.
- */
-- (BOOL) canUseAppleMail:(NSString*) scheme
-{
-    return [scheme hasPrefix:@"mailto"];
-}
-
-/**
- * Invokes the callback without any parameter.
- */
-- (void) execCallback {
-    [self execCallback:NO];
-}
-
-- (void) execCallback:(BOOL)success
-{
-    
-    CDVPluginResult *result = [CDVPluginResult
-                               resultWithStatus:CDVCommandStatus_OK messageAsBool:success];
-
-    [self.commandDelegate sendPluginResult:result
-                                callbackId:self.command.callbackId];
-}
-
 @end
