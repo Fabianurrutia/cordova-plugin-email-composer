@@ -16,6 +16,20 @@
     NSString* base64Attachment = props[@"base64Attachment"];
     NSString* attachmentFilename = props[@"attachmentFilename"] ?: @"attachment.pdf";
 
+    NSArray* rawToRecipients = props[@"to"];
+    NSMutableArray* toRecipients = [NSMutableArray array];
+
+    if ([rawToRecipients isKindOfClass:[NSArray class]]) {
+        for (id item in rawToRecipients) {
+            if ([item isKindOfClass:[NSString class]]) {
+                NSString *trimmed = [item stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                if (trimmed.length > 0 && [trimmed containsString:@"@"]) {
+                    [toRecipients addObject:trimmed];
+                }
+            }
+        }
+    }
+
     if (![MFMailComposeViewController canSendMail]) {
         CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_ERROR messageAsString:@"Cannot send mail"];
         [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
@@ -28,6 +42,10 @@
     [mailVC setSubject:subject];
     [mailVC setMessageBody:body isHTML:YES];
 
+    if (toRecipients.count > 0) {
+        [mailVC setToRecipients:toRecipients];
+    }
+
     if (base64Attachment) {
         NSData *data = [[NSData alloc] initWithBase64EncodedString:base64Attachment options:NSDataBase64DecodingIgnoreUnknownCharacters];
         if (data) {
@@ -37,6 +55,7 @@
 
     [self.viewController presentViewController:mailVC animated:YES completion:nil];
 }
+
 
 - (void)mailComposeController:(MFMailComposeViewController*)controller
           didFinishWithResult:(MFMailComposeResult)result
