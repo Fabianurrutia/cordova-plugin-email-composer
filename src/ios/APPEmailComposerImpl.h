@@ -1,5 +1,4 @@
-// This class is not used in the simplified implementation
-#import "APPEmailComposerImpl.h"
+#import <Foundation/Foundation.h>
 
-@implementation APPEmailComposerImpl
+@interface APPEmailComposerImpl : NSObject
 @end
